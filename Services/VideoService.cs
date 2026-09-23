@@ -51,9 +51,17 @@ namespace VideoSyncer.Services
                 return;
             }
 
+            var (inputWidth, inputHeight) = GetVideoSize(videos[0], progress, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (inputWidth <= 0 || inputHeight <= 0)
+            {
+                progress.Report("エラー: 入力動画のサイズを取得できませんでした");
+                return;
+            }
+
             var minOffset = offsets.Min();
             var delays = offsets.Select(o => o - minOffset).ToArray();
-            var config = GridPlacement.GetLayoutConfig(videos.Length, targetWidth, targetHeight);
+            var config = GridPlacement.GetLayoutConfig(videos.Length, targetWidth, targetHeight, inputWidth, inputHeight);
             var arguments = FFmpegCommandBuilder.BuildCommand(videos, delays, config, encodeOptions, outputFile, targetWidth, targetHeight);
 
             var totalDurationSeconds = GetVideoDuration(videos[0], progress, cancellationToken).TotalSeconds;
@@ -89,6 +97,33 @@ namespace VideoSyncer.Services
             return double.TryParse(output.Trim(), System.Globalization.CultureInfo.InvariantCulture, out var sec)
                 ? TimeSpan.FromSeconds(sec)
                 : TimeSpan.Zero;
+        }
+
+        /// <summary>
+        /// 動画の幅・高さを取得する
+        /// </summary>
+        /// <param name="filePath">動画ファイルパス</param>
+        /// <param name="progress">進捗状況</param>
+        /// <param name="cancellationToken">キャンセルトークン</param>
+        /// <returns>動画の幅・高さ。取得に失敗した場合は(0, 0)</returns>
+        private (int Width, int Height) GetVideoSize(string filePath, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+        {
+            if (!File.Exists(_ffprobeExePath))
+            {
+                return (0, 0);
+            }
+
+            var args = $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 \"{filePath}\"";
+            var (output, _) = ExternalProcess.RunCommandWithResult(_ffprobeExePath, args, 1, progress, cancellationToken);
+
+            var parts = output.Trim().Split('x');
+            if (parts.Length == 2
+                && int.TryParse(parts[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var width)
+                && int.TryParse(parts[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var height))
+            {
+                return (width, height);
+            }
+            return (0, 0);
         }
     }
 }
